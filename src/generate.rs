@@ -12,23 +12,6 @@ use crate::model::Phisch;
 use crate::model::kv_cache::KVCache;
 use crate::tokenizer::{END, Tokenizer};
 
-fn config_for(dir: &Path, checkpoint: Option<&str>) -> anyhow::Result<TrainConfig> {
-    let specific = checkpoint
-        .map(|name| {
-            ["-best", "-latest", "-step"]
-                .iter()
-                .fold(name, |name, suffix| {
-                    name.strip_suffix(suffix).unwrap_or(name)
-                })
-        })
-        .map(|artifact| dir.join(format!("{artifact}-config.json")))
-        .filter(|path| path.exists());
-
-    Ok(TrainConfig::load(
-        specific.unwrap_or_else(|| dir.join("config.json")),
-    )?)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
     dir: &Path,
@@ -42,12 +25,7 @@ pub fn generate(
 ) -> anyhow::Result<()> {
     log::set_max_level(log::LevelFilter::Off);
     let device = Device::default();
-    let config = config_for(dir, checkpoint)?;
-
-    let checkpoint = match checkpoint {
-        Some(name) => name.to_string(),
-        None => format!("{}-best", config.artifact),
-    };
+    let (config, checkpoint) = TrainConfig::config_for(dir, checkpoint)?;
 
     let tokenizer = Tokenizer::load(&config.tokenizer)?;
     let rope_config = config.model.clone().with_seq_length(max_context);

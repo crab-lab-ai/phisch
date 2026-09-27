@@ -63,6 +63,8 @@ The next step is actually training the model, when you have your configuration p
 
 Once you have a successfully trained Phisch you can generate a sequence with it by using `phisch generate <PROMPT>`, if a checkpoint isn't passed via argument it will load the `-best` checkpoint of the last model trained in the `artifacts/` directory.
 
+Finally, if you want to share your Phisch you can use `phisch export` to turn a checkpoint into a safetensors file, it will write the weights together with the model config and the tokenizer in the `out/` directory.
+
 ```sh
 Usage: phisch <COMMAND>
 
@@ -71,6 +73,7 @@ Commands:
   tokenizer  Train the tokenizer
   train      Train a Phisch
   generate   Generate a sequence of text
+  export     Export a checkpoint as safetensors
   help       Print this message or the help of the given subcommand(s)
 
 Options:

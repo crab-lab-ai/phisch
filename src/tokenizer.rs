@@ -49,6 +49,10 @@ impl Tokenizer {
             .token_to_id(token)
             .ok_or_else(|| anyhow!("{token} is missing from the tokenizer"))
     }
+
+    pub fn into_inner(self) -> Inner {
+        self.inner
+    }
 }
 
 fn special_tokens() -> Vec<AddedToken> {

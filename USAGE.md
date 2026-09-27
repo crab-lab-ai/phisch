@@ -10,6 +10,7 @@ Commands:
   tokenizer  Train the tokenizer
   train      Train a Phisch
   generate   Generate a sequence of text
+  export     Export a checkpoint as safetensors
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -23,6 +24,7 @@ A typical pipeline looks like this:
 2. `phisch tokenizer` to train a tokenizer on your corpus
 3. `phisch train` to train the model with your config
 4. `phisch generate` to generate a sequence of text
+5. `phisch export` to turn a checkpoint into a safetensors file you can share
 
 ---
 
@@ -254,7 +256,7 @@ Arguments:
   <PROMPT>  Prompt to complete
 
 Options:
-  -m, --model <MODEL>              Directory of a trained model [default: artifacts/]
+  -a, --artifacts <ARTIFACTS>      Directory of a trained model [default: artifacts/]
       --checkpoint <CHECKPOINT>    Checkpoint to load, defaults to the config artifact plus -best
   -t, --tokens <TOKENS>            Amount of tokens to generate [default: 64]
   -k, --top-k <TOP_K>              Amount of candidates to sample from [default: 40]
@@ -267,8 +269,8 @@ Options:
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `<PROMPT>` | *(required)* | The text to continue. |
-| `-m`, `--model` | `artifacts/` | The artifacts directory of a training, the same one you gave `phisch train -a`. |
-| `--checkpoint` | `<artifact>-best` | Which checkpoint inside `--model` to load, **without** the `.mpk` extension, for example `phisch-latest`. |
+| `-a`, `--artifacts` | `artifacts/` | The artifacts directory of a training, the same one you gave `phisch train -a`. |
+| `--checkpoint` | `<artifact>-best` | Which checkpoint inside `--artifacts` to load, **without** the `.mpk` extension, for example `phisch-latest`. |
 | `-t`, `--tokens` | `64` | Most tokens to generate. It can stop earlier, see below. |
 | `-k`, `--top-k` | `40` | Only the `k` most likely next tokens can be picked. Lower is safer, higher is more varied. |
 | `--temperature` | `0.8` | How adventurous the picks are. Lower sticks to the likely tokens, higher takes more risks. `0` always takes the most likely one. |
@@ -278,14 +280,14 @@ Options:
 ```sh
 phisch generate "Once upon a time" -t 100
 phisch generate "Once upon a time" --temperature 0
-phisch generate "Once upon a time" -m runs/experiment-1 --checkpoint phisch-latest
+phisch generate "Once upon a time" -a runs/experiment-1 --checkpoint phisch-latest
 ```
 
 Generation stops when the model writes `<|end|>`, when it reaches `--tokens`, or when it reaches `--max-context`, whatever comes first.
 
 ### Which model gets loaded
 
-- **Without `--checkpoint`**, phisch reads `config.json` inside `--model`, which belongs to the last training that wrote there, and loads that run `-best`.
+- **Without `--checkpoint`**, phisch reads `config.json` inside `--artifacts`, which belongs to the last training that wrote there, and loads the `-best`.
 - **With `--checkpoint`**, it loads that checkpoint and looks for its own `<artifact>-config.json` next to it. If there isn't one (checkpoints from older versions), it falls back to `config.json`.
 
 That way, you can keep several trainings in the same directory and still load any of them.
@@ -329,6 +331,46 @@ When generating, phisch keeps a cache of what it has already read, so every new 
 
 > [!NOTE]
 > `--max-context` has to be bigger than your prompt (after the `seq_length` cut). If it isn't, phisch tells you instead of crashing.
+
+---
+
+## Export
+
+Turns a trained checkpoint into a safetensors file, together with everything needed to use it again, so you can share or publish your model.
+
+```sh
+Usage: phisch export [OPTIONS]
+
+Options:
+      --checkpoint <CHECKPOINT>  Checkpoint to load, defaults to the config artifact plus -best
+  -a, --artifacts <ARTIFACTS>    Directory of a trained model [default: artifacts/]
+  -o, --output <OUTPUT>          Output directory for the safetensors file [default: out/]
+  -h, --help                     Print help
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--checkpoint` | `<artifact>-best` | Which checkpoint inside `--artifacts` to export, **without** the `.mpk` extension. It's picked the same way as in `generate`, see [Which model gets loaded](#which-model-gets-loaded). |
+| `-a`, `--artifacts` | `artifacts/` | The artifacts directory of a training. |
+| `-o`, `--output` | `out/` | Where the exported files are written. Created if it doesn't exist. |
+
+```sh
+phisch export --checkpoint phisch-best -o out/phisch-v1
+```
+
+Export writes three files into `--output`:
+
+| File | What it is |
+|---|---|
+| `<checkpoint>.safetensors` | The weights, in f32. Named after `--checkpoint`, or `model.safetensors` if you didn't pass one. |
+| `config.json` | The model settings (`d_model`, `d_ff`, `seq_length`, `heads`, `layers`, `dropout`), so the network can be rebuilt around the weights. |
+| `tokenizer.json` | The tokenizer the model was trained with. |
+
+> [!NOTE]
+> `config.json` and `tokenizer.json` always have the same name, so exporting two different models into the same `--output` overwrites them. Give every export its own directory.
+
+> [!NOTE]
+> The rotary position table isn't stored, it's rebuilt when the model is loaded: its values come from the head size in `config.json` (`d_model / heads`), and `phisch generate` makes it as long as `--max-context`. If you want to load the weights outside of phisch, keep in mind two differences with how PyTorch models are usually stored: linear weights are saved as `[in, out]`, and the rotary encoding pairs neighbouring dimensions instead of splitting each head in halves.
 
 ---
 

@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 const CONFIG: &str = "configs/";
 const ARTIFACTS: &str = "artifacts/";
+const OUTPUT: &str = "out/";
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -52,7 +53,7 @@ pub enum Commands {
             default_value = ARTIFACTS,
             help = "Directory of a trained model"
         )]
-        model: PathBuf,
+        artifacts: PathBuf,
         #[arg(
             long,
             help = "Checkpoint to load, defaults to the config artifact plus -best"
@@ -86,5 +87,22 @@ pub enum Commands {
             help = "Most tokens a single generation can reach, prompt included"
         )]
         max_context: usize,
+    },
+    #[command(about = "Export a checkpoint as safetensors")]
+    Export {
+        #[arg(
+            long,
+            help = "Checkpoint to load, defaults to the config artifact plus -best"
+        )]
+        checkpoint: Option<String>,
+        #[arg(
+            short,
+            long,
+            default_value = ARTIFACTS,
+            help = "Directory of a trained model"
+        )]
+        artifacts: PathBuf,
+        #[arg(short, long, default_value = OUTPUT, help = "Output directory for the safetensors file")]
+        output: PathBuf,
     },
 }

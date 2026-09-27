@@ -6,6 +6,7 @@ use crate::{
     cli::{Cli, Commands},
     config::train::TrainConfig,
     logger::Logger,
+    store::save_safetensor,
 };
 
 mod backend;
@@ -15,6 +16,7 @@ mod data;
 mod generate;
 mod logger;
 mod model;
+mod store;
 mod tokenizer;
 mod train;
 
@@ -41,7 +43,7 @@ fn main() -> Result<()> {
         } => train::train(&config, resume, &artifacts),
         Commands::Generate {
             prompt,
-            model,
+            artifacts,
             checkpoint,
             tokens,
             top_k,
@@ -49,7 +51,7 @@ fn main() -> Result<()> {
             seed,
             max_context,
         } => generate::generate(
-            &model,
+            &artifacts,
             checkpoint.as_deref(),
             &prompt,
             tokens,
@@ -58,5 +60,10 @@ fn main() -> Result<()> {
             seed,
             max_context,
         ),
+        Commands::Export {
+            checkpoint,
+            artifacts,
+            output,
+        } => save_safetensor(checkpoint.as_deref(), &artifacts, &output),
     }
 }

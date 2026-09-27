@@ -2,6 +2,7 @@
 /artifacts/*
 /data/*
 /configs/*
+/out
 !/artifacts/.gitkeep
 !/data/.gitkeep
 !/configs/.gitkeep
