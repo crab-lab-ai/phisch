@@ -1,3 +1,7 @@
 /target
-/artifacts
-/data
+/artifacts/*
+/data/*
+/configs/*
+!/artifacts/.gitkeep
+!/data/.gitkeep
+!/configs/.gitkeep
