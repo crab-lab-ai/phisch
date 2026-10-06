@@ -4996,15 +4996,18 @@ name = "phisch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "burn",
  "burn-store",
  "clap",
+ "colored",
  "log",
  "nobubbles",
  "rand 0.10.3",
  "serde",
  "serde_json",
  "tokenizers",
+ "tokio",
 ]
 
 [[package]]
@@ -6722,6 +6725,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
