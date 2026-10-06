@@ -105,4 +105,23 @@ pub enum Commands {
         #[arg(short, long, default_value = OUTPUT, help = "Output directory for the safetensors file")]
         output: PathBuf,
     },
+    #[command(about = "Show sizes of a config or a corpus")]
+    Info {
+        #[command(subcommand)]
+        command: InfoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InfoCommand {
+    Config {
+        #[arg(index = 1, help = "Training config file")]
+        path: PathBuf,
+    },
+    Corpus {
+        #[arg(index = 1, help = "Corpus file")]
+        path: PathBuf,
+        #[arg(short, long, help = "Tokenizer file")]
+        tokenizer: PathBuf,
+    },
 }
