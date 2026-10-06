@@ -11,6 +11,7 @@ Commands:
   train      Train a Phisch
   generate   Generate a sequence of text
   export     Export a checkpoint as safetensors
+  info       Show sizes of a config or a corpus
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -371,6 +372,86 @@ Export writes three files into `--output`:
 
 > [!NOTE]
 > The rotary position table isn't stored, it's rebuilt when the model is loaded: its values come from the head size in `config.json` (`d_model / heads`), and `phisch generate` makes it as long as `--max-context`. If you want to load the weights outside of phisch, keep in mind two differences with how PyTorch models are usually stored: linear weights are saved as `[in, out]`, and the rotary encoding pairs neighbouring dimensions instead of splitting each head in halves.
+
+---
+
+## Info
+
+Shows how big a config or a corpus is, so you can size a training before starting it.
+
+```sh
+Usage: phisch info <COMMAND>
+
+Commands:
+  config  
+  corpus  
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+### Config
+
+Builds the model described by a config and counts its parameters.
+
+```sh
+Usage: phisch info config <PATH>
+
+Arguments:
+  <PATH>  Training config file
+
+Options:
+  -h, --help  Print help
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `<PATH>` | *(required)* | Path of a training config, see [The config file](#the-config-file). |
+
+```sh
+phisch info config configs/my-config.json
+```
+
+It prints the config, the tokenizer it uses and the number of parameters of the model.
+
+### Corpus
+
+Reads a corpus and counts what's inside it, tokens included.
+
+```sh
+Usage: phisch info corpus --tokenizer <TOKENIZER> <PATH>
+
+Arguments:
+  <PATH>  Corpus file
+
+Options:
+  -t, --tokenizer <TOKENIZER>  Tokenizer file
+  -h, --help                   Print help
+```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `<PATH>` | *(required)* | The text file to count. |
+| `-t`, `--tokenizer` | *(required)* | The tokenizer used to count the tokens. |
+
+```sh
+phisch info corpus data/chats.txt -t data/tokenizer-8192.json
+```
+
+It prints:
+
+| Field | What it is |
+|---|---|
+| `size` | Size of the file. |
+| `lines` | Number of lines. |
+| `words` | Number of words, split on whitespace. |
+| `chars` | Number of characters. |
+| `tokens` | Number of tokens with the given tokenizer. |
+| `chars per token` | How many characters a token holds on average. |
+
+> [!NOTE]
+> The corpus is tokenized line by line, the same way `phisch train` does it, so `tokens` is what training will see (before the validation split). The same text gives a different count with a different tokenizer.
 
 ---
 

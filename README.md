@@ -74,6 +74,7 @@ Commands:
   train      Train a Phisch
   generate   Generate a sequence of text
   export     Export a checkpoint as safetensors
+  info       Show sizes of a config or a corpus
   help       Print this message or the help of the given subcommand(s)
 
 Options:
