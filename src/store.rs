@@ -7,7 +7,7 @@ use log::info;
 
 use crate::{
     backend::{Device, Inference},
-    config::train::TrainConfig,
+    config::{model::ModelConfig, train::TrainConfig},
     model::Phisch,
     tokenizer::Tokenizer,
 };
@@ -43,4 +43,35 @@ pub fn save_safetensor(checkpoint: Option<&str>, dir: &Path, out: &Path) -> Resu
     );
 
     Ok(())
+}
+
+pub fn load_model(
+    dir: &Path,
+    checkpoint: Option<&str>,
+    max_context: usize,
+    device: &Device,
+) -> Result<(Phisch<Inference>, Tokenizer, ModelConfig)> {
+    if let Some(file) = checkpoint.filter(|name| name.ends_with(".safetensors")) {
+        let config = ModelConfig::load(dir.join("config.json"))?;
+        let tokenizer = Tokenizer::load(dir.join("tokenizer.json"))?;
+        let mut model = Phisch::<Inference>::new(
+            &config.clone().with_seq_length(max_context),
+            tokenizer.vocab_size(),
+            device,
+        );
+        model.load_from(&mut SafetensorsStore::from_file(dir.join(file)))?;
+
+        return Ok((model, tokenizer, config));
+    }
+
+    let (config, checkpoint) = TrainConfig::config_for(dir, checkpoint)?;
+    let tokenizer = Tokenizer::load(&config.tokenizer)?;
+    let model = Phisch::<Inference>::new(
+        &config.model.clone().with_seq_length(max_context),
+        tokenizer.vocab_size(),
+        device,
+    )
+    .load_file(dir.join(&checkpoint), &CompactRecorder::new(), device)?;
+
+    Ok((model, tokenizer, config.model))
 }
