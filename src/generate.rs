@@ -1,16 +1,17 @@
 use std::path::Path;
 
+use anyhow::Result;
 use burn::prelude::*;
-use burn::record::CompactRecorder;
 use burn::tensor::activation::softmax;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 use crate::backend::{Device, Inference};
-use crate::config::train::TrainConfig;
+use crate::config::model::ModelConfig;
 use crate::model::Phisch;
 use crate::model::kv_cache::KVCache;
-use crate::tokenizer::{END, Tokenizer};
+use crate::store::load_model;
+use crate::tokenizer::END;
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
@@ -22,31 +23,54 @@ pub fn generate(
     temperature: f64,
     seed: u64,
     max_context: usize,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     log::set_max_level(log::LevelFilter::Off);
     let device = Device::default();
-    let (config, checkpoint) = TrainConfig::config_for(dir, checkpoint)?;
-
-    let tokenizer = Tokenizer::load(&config.tokenizer)?;
-    let rope_config = config.model.clone().with_seq_length(max_context);
-    let model = Phisch::<Inference>::new(&rope_config, tokenizer.vocab_size(), &device).load_file(
-        dir.join(&checkpoint),
-        &CompactRecorder::new(),
-        &device,
-    )?;
+    let (model, tokenizer, config) = load_model(dir, checkpoint, max_context, &device)?;
 
     let mut ids = tokenizer.encode(prompt)?;
     let end = tokenizer.id(END)?;
-    let mut rng = StdRng::seed_from_u64(seed);
+    let sampling = Sampling {
+        tokens,
+        top_k,
+        temperature,
+        seed,
+        max_context,
+    };
 
-    let mut kv_cache =
-        vec![KVCache::<Inference>::empty(config.model.seq_length); config.model.layers];
+    ids.extend(complete(&model, &config, &ids, end, &sampling)?);
 
-    let context = &ids[ids.len().saturating_sub(config.model.seq_length)..];
+    println!("{}", tokenizer.decode(&ids[..], false)?);
+
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub struct Sampling {
+    pub tokens: usize,
+    pub top_k: usize,
+    pub temperature: f64,
+    pub seed: u64,
+    pub max_context: usize,
+}
+
+pub fn complete(
+    model: &Phisch<Inference>,
+    config: &ModelConfig,
+    ids: &[u32],
+    end: u32,
+    sampling: &Sampling,
+) -> Result<Vec<u32>> {
+    let device = model.embedding.weight.val().device();
+    let mut rng = StdRng::seed_from_u64(sampling.seed);
+    let mut kv_cache = vec![KVCache::<Inference>::empty(config.seq_length); config.layers];
+
+    let context = &ids[ids.len().saturating_sub(config.seq_length)..];
 
     anyhow::ensure!(
-        max_context > context.len(),
-        "--max-context ({max_context}) must be larger than the prompt ({} tokens)",
+        sampling.max_context > context.len(),
+        "max-context ({}) must be larger than the prompt ({} tokens)",
+        sampling.max_context,
         context.len()
     );
 
@@ -55,13 +79,14 @@ pub fn generate(
         &device,
     );
     let mut logits = model.forward(input, Some(&mut kv_cache));
+    let mut generated = Vec::new();
 
-    for _ in 0..tokens {
+    for _ in 0..sampling.tokens {
         let [_, last, vocab] = logits.dims();
         let next = sample(
             logits.slice([0..1, last - 1..last]).reshape([vocab]),
-            top_k,
-            temperature,
+            sampling.top_k,
+            sampling.temperature,
             &mut rng,
         );
 
@@ -69,9 +94,9 @@ pub fn generate(
             break;
         }
 
-        ids.push(next);
+        generated.push(next);
 
-        if kv_cache[0].seen >= max_context {
+        if kv_cache[0].seen >= sampling.max_context {
             break;
         }
 
@@ -79,9 +104,7 @@ pub fn generate(
         logits = model.forward(input, Some(&mut kv_cache));
     }
 
-    println!("{}", tokenizer.decode(&ids[..], false)?);
-
-    Ok(())
+    Ok(generated)
 }
 
 fn sample<B: Backend>(
