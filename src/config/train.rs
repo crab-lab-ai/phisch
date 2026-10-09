@@ -22,6 +22,8 @@ pub struct TrainConfig {
     pub epochs: usize,
     #[config(default = 1e-3)]
     pub lr: f64,
+    #[config(default = 0.0)]
+    pub min_lr: f64,
     #[config(default = 0.05)]
     pub valid: f64,
     #[config(default = "String::from(\"model\")")]

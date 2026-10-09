@@ -82,6 +82,18 @@ fn valid_loss(
     (count > 0).then(|| total / count as f32)
 }
 
+fn lr_at(config: &TrainConfig, global: usize, total: usize) -> f64 {
+    if global < config.warmup {
+        return config.lr * (global + 1) as f64 / config.warmup as f64;
+    }
+
+    let progress = (global - config.warmup) as f64 / (total - config.warmup).max(1) as f64;
+    config.min_lr
+        + 0.5
+            * (config.lr - config.min_lr)
+            * (1.0 + (std::f64::consts::PI * progress.min(1.0)).cos())
+}
+
 pub fn train(path: &Path, resume: bool, artifacts: &Path) -> anyhow::Result<()> {
     let config = TrainConfig::load(path)?;
     let device = Device::default();
@@ -145,6 +157,8 @@ pub fn train(path: &Path, resume: bool, artifacts: &Path) -> anyhow::Result<()> 
     let mut global = start.global;
     let mut best_loss = start.best.unwrap_or(f32::INFINITY);
 
+    let total = config.epochs * loader_train.num_items().div_ceil(config.batch);
+
     for epoch in 1..=config.epochs {
         let batches = loader_train.iter();
 
@@ -155,7 +169,7 @@ pub fn train(path: &Path, resume: bool, artifacts: &Path) -> anyhow::Result<()> 
         let skip = if epoch == start.epoch { start.step } else { 0 };
         let mut last_loss = 0.;
         for (step, batch) in batches.enumerate().skip(skip) {
-            let lr = config.lr * ((global + 1) as f64 / config.warmup.max(1) as f64).min(1.0);
+            let lr = lr_at(&config, global, total);
             let value = loss(&model, batch, &loss_fn);
             last_loss = value.clone().into_scalar().elem::<f32>();
 
