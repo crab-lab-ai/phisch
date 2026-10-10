@@ -12,6 +12,7 @@ Commands:
   generate   Generate a sequence of text
   export     Export a checkpoint as safetensors
   info       Show sizes of a config or a corpus
+  serve      Run a web server with the model in the specified directory
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -26,6 +27,7 @@ A typical pipeline looks like this:
 3. `phisch train` to train the model with your config
 4. `phisch generate` to generate a sequence of text
 5. `phisch export` to turn a checkpoint into a safetensors file you can share
+6. `phisch serve` to use the model from other programs over HTTP
 
 ---
 
@@ -141,6 +143,7 @@ This is what `phisch config` generates:
   "batch": 4,
   "epochs": 5,
   "lr": 0.001,
+  "min_lr": 0.0,
   "valid": 0.05,
   "artifact": "model",
   "init": null,
@@ -176,7 +179,8 @@ These decide the shape of the network. `d_model`, `d_ff`, `heads` and `layers` a
 | `dataset` | — | Path of the text file to train on. It's read line by line, so a document per line works best. |
 | `batch` | `4` | How many sequences are processed per step. |
 | `epochs` | `5` | How many times the whole dataset is seen. |
-| `lr` | `0.001` | Peak learning rate of the AdamW optimizer. It's reached after `warmup` steps and stays there. |
+| `lr` | `0.001` | Peak learning rate of the AdamW optimizer. It's reached after `warmup` steps, then it goes down following a cosine curve until `min_lr` at the end of the last epoch. |
+| `min_lr` | `0.0` | Learning rate at the end of the training, where the cosine curve ends. |
 | `valid` | `0.05` | Fraction of the dataset kept for validation, taken from the **end** of the file. |
 | `artifact` | `"model"` | Name of the run. Every file it writes starts with it, see [What training writes](#what-training-writes). |
 | `init` | `null` | A checkpoint to start from instead of random weights, see [Chaining trainings](#chaining-trainings). |
@@ -257,31 +261,44 @@ Arguments:
   <PROMPT>  Prompt to complete
 
 Options:
-  -a, --artifacts <ARTIFACTS>      Directory of a trained model [default: artifacts/]
-      --checkpoint <CHECKPOINT>    Checkpoint to load, defaults to the config artifact plus -best
-  -t, --tokens <TOKENS>            Amount of tokens to generate [default: 64]
-  -k, --top-k <TOP_K>              Amount of candidates to sample from [default: 40]
-      --temperature <TEMPERATURE>  Sampling temperature, 0 for greedy [default: 0.8]
-  -s, --seed <SEED>                Seed of the sampler [default: 50]
-      --max-context <MAX_CONTEXT>  Most tokens a single generation can reach, prompt included [default: 4096]
-  -h, --help                       Print help
+  -a, --artifacts <ARTIFACTS>
+          Directory of a trained model [default: artifacts/]
+      --checkpoint <CHECKPOINT>
+          Checkpoint to load, defaults to the config artifact plus -best
+  -t, --tokens <TOKENS>
+          Amount of tokens to generate [default: 64]
+  -k, --top-k <TOP_K>
+          Amount of candidates to sample from [default: 40]
+      --temperature <TEMPERATURE>
+          Sampling temperature, 0 for greedy [default: 0.8]
+      --repetition-penalty <REPETITION_PENALTY>
+          Repetition penalty [default: 1]
+  -s, --seed <SEED>
+          Seed of the sampler [default: 50]
+      --max-context <MAX_CONTEXT>
+          Most tokens a single generation can reach, prompt included [default: 4096]
+  -h, --help
+          Print help
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `<PROMPT>` | *(required)* | The text to continue. |
 | `-a`, `--artifacts` | `artifacts/` | The artifacts directory of a training, the same one you gave `phisch train -a`. |
-| `--checkpoint` | `<artifact>-best` | Which checkpoint inside `--artifacts` to load, **without** the `.mpk` extension, for example `phisch-latest`. |
+| `--checkpoint` | `<artifact>-best` | Which checkpoint inside `--artifacts` to load, **without** the `.mpk` extension, for example `phisch-latest`. A name ending in `.safetensors` loads an export instead, see [Which model gets loaded](#which-model-gets-loaded). |
 | `-t`, `--tokens` | `64` | Most tokens to generate. It can stop earlier, see below. |
 | `-k`, `--top-k` | `40` | Only the `k` most likely next tokens can be picked. Lower is safer, higher is more varied. |
 | `--temperature` | `0.8` | How adventurous the picks are. Lower sticks to the likely tokens, higher takes more risks. `0` always takes the most likely one. |
+| `--repetition-penalty` | `1.0` | How much the model is pushed away from tokens it wrote recently. `1.0` turns it off, higher repeats less. Has to be bigger than `0`, see [Sampling](#sampling). |
 | `-s`, `--seed` | `50` | Seed of the sampling. Same prompt, same seed and same settings give the same text. |
 | `--max-context` | `4096` | Most tokens a single generation can reach, prompt included, see [Context and memory](#context-and-memory). |
 
 ```sh
 phisch generate "Once upon a time" -t 100
 phisch generate "Once upon a time" --temperature 0
+phisch generate "Once upon a time" --repetition-penalty 1.2
 phisch generate "Once upon a time" -a runs/experiment-1 --checkpoint phisch-latest
+phisch generate "Once upon a time" -a out/phisch-v1 --checkpoint phisch-best.safetensors
 ```
 
 Generation stops when the model writes `<|end|>`, when it reaches `--tokens`, or when it reaches `--max-context`, whatever comes first.
@@ -290,6 +307,7 @@ Generation stops when the model writes `<|end|>`, when it reaches `--tokens`, or
 
 - **Without `--checkpoint`**, phisch reads `config.json` inside `--artifacts`, which belongs to the last training that wrote there, and loads the `-best`.
 - **With `--checkpoint`**, it loads that checkpoint and looks for its own `<artifact>-config.json` next to it. If there isn't one (checkpoints from older versions), it falls back to `config.json`.
+- **With a `--checkpoint` ending in `.safetensors`**, `--artifacts` is treated as an export directory (see [Export](#export)): the weights come from that file, and the model settings and the tokenizer from the `config.json` and `tokenizer.json` next to it.
 
 That way, you can keep several trainings in the same directory and still load any of them.
 
@@ -297,6 +315,7 @@ That way, you can keep several trainings in the same directory and still load an
 
 - `--temperature 0` is greedy, the model always takes its most likely token. Good for testing, since the output is always the same, but small models tend to repeat themselves this way.
 - Otherwise, the scores are divided by `--temperature`, only the `--top-k` best are kept, and one is picked at random following their probabilities.
+- Before any of that, `--repetition-penalty` lowers the score of every token among the last 32 the model wrote, so it's less likely to pick them again. Special tokens like `<|end|>` are never penalized, and neither is your prompt. It works with `--temperature 0` too, which is where small models repeat the most. Values around `1.1` to `1.3` are a good start.
 
 ### Talking to it
 
@@ -369,6 +388,9 @@ Export writes three files into `--output`:
 
 > [!NOTE]
 > `config.json` and `tokenizer.json` always have the same name, so exporting two different models into the same `--output` overwrites them. Give every export its own directory.
+
+> [!WARNING]
+> Be careful with the exported `config.json`, as it's not the same as the one in the artifacts directory and mixing them would cause problems.
 
 > [!NOTE]
 > The rotary position table isn't stored, it's rebuilt when the model is loaded: its values come from the head size in `config.json` (`d_model / heads`), and `phisch generate` makes it as long as `--max-context`. If you want to load the weights outside of phisch, keep in mind two differences with how PyTorch models are usually stored: linear weights are saved as `[in, out]`, and the rotary encoding pairs neighbouring dimensions instead of splitting each head in halves.
@@ -452,6 +474,143 @@ It prints:
 
 > [!NOTE]
 > The corpus is tokenized line by line, the same way `phisch train` does it, so `tokens` is what training will see (before the validation split). The same text gives a different count with a different tokenizer.
+
+---
+
+## Serve
+
+Starts a web server, so other programs can load a model and generate with it over HTTP.
+
+```sh
+Usage: phisch serve [OPTIONS]
+
+Options:
+      --host <HOST>            Host address used to serve the api [default: 127.0.0.1]
+  -p, --port <PORT>            Port used to serve the api [default: 6248]
+  -d, --directory <DIRECTORY>  Directory of a trained model [default: artifacts/]
+  -h, --help                   Print help
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--host` | `127.0.0.1` | Address the server listens on. `127.0.0.1` only accepts your own machine, `0.0.0.0` opens it to your network. |
+| `-p`, `--port` | `6248` | Port the server listens on. |
+| `-d`, `--directory` | `artifacts/` | Where models are loaded from, either the artifacts directory of a training or an export directory. |
+
+```sh
+phisch serve
+phisch serve -p 8080 -d out/phisch-v1
+```
+
+The server starts **without** a model, so the first thing to do is `/load` one. Every endpoint logs its route when it's called, for example `POST /load`.
+
+### Endpoints
+
+| Method | Route | What it does |
+|---|---|---|
+| `GET` | `/` | Answers `Phisch is listening!`, to check the server is up. |
+| `GET` | `/status` | Tells you which model is loaded, if any. |
+| `POST` | `/load` | Loads a model from `--directory`, replacing the current one. |
+| `POST` | `/unload` | Drops the current model and frees its memory. |
+| `POST` | `/complete` | Continues a prompt, like `phisch generate`. |
+| `POST` | `/chat` | Answers a conversation as the assistant. |
+
+Every `POST` that has a body needs the `Content-Type: application/json` header.
+
+### Loading a model
+
+| Field | Default | Description |
+|---|---|---|
+| `checkpoint` | `<artifact>-best` | Which checkpoint inside `--directory` to load, picked the same way as `phisch generate --checkpoint`, see [Which model gets loaded](#which-model-gets-loaded). A name ending in `.safetensors` loads an export. |
+| `max_context` | `4096` | Most tokens a single generation can reach, the same as `phisch generate --max-context`. No request can ask for more than this. |
+
+Both fields can be left out:
+
+```sh
+curl -X POST localhost:6248/load -H 'Content-Type: application/json' -d '{}'
+curl -X POST localhost:6248/load -H 'Content-Type: application/json' -d '{"checkpoint": "phisch-best.safetensors", "max_context": 2048}'
+```
+
+It answers `204 No Content` when the model is ready. `/unload` takes no body and answers `204` too.
+
+> [!NOTE]
+> `/load` drops the current model **before** loading the new one, so two models are never loaded in memory at the same time. If the new one fails to load, you're left without a model until you load another.
+
+### Status
+
+```sh
+curl localhost:6248/status
+```
+
+```json
+{
+  "directory": "artifacts/",
+  "model": {
+    "checkpoint": "phisch-best",
+    "max_context": 4096,
+    "parameters": 1115264,
+    "vocab": 2048,
+    "config": { "d_model": 128, "d_ff": 384, "seq_length": 256, "heads": 4, "layers": 4, "dropout": 0.05 }
+  }
+}
+```
+
+`model` is `null` when nothing is loaded. `checkpoint` is always the name that was really loaded, so if you loaded without one you'll see which `-best` it picked.
+
+### Complete
+
+Continues a prompt. The body has the prompt and a `sampling` object, and **every** sampling field is required:
+
+| Field | Same as | Description |
+|---|---|---|
+| `tokens` | `--tokens` | Most tokens to generate. |
+| `top_k` | `--top-k` | Only the `k` most likely next tokens can be picked. |
+| `temperature` | `--temperature` | How adventurous the picks are, `0` is greedy. |
+| `repetition_penalty` | `--repetition-penalty` | How much recently written tokens are avoided, `1.0` turns it off. Has to be bigger than `0`. |
+| `seed` | `--seed` | Seed of the sampling. |
+| `max_context` | `--max-context` | Most tokens this generation can reach. Can't be bigger than the `max_context` the model was loaded with. |
+
+```sh
+curl -X POST localhost:6248/complete -H 'Content-Type: application/json' -d '{
+  "prompt": "Once upon a time",
+  "sampling": { "tokens": 64, "top_k": 40, "temperature": 0.8, "repetition_penalty": 1.0, "seed": 50, "max_context": 4096 }
+}'
+```
+
+```json
+{ "text": " there was a little fish..." }
+```
+
+`text` is only what the model wrote, **without** your prompt. Special tokens stay visible, and the `<|end|>` that stopped the generation isn't included. With the same settings it's exactly what `phisch generate` writes after the prompt.
+
+### Chat
+
+Answers a conversation. Instead of writing the special tokens yourself, you send the messages and phisch builds the prompt:
+
+```sh
+curl -X POST localhost:6248/chat -H 'Content-Type: application/json' -d '{
+  "messages": [
+    { "role": "system", "content": "You are Phisch, a helpful assistant." },
+    { "role": "user", "content": "hi, who are you?" }
+  ],
+  "sampling": { "tokens": 64, "top_k": 40, "temperature": 0.8, "repetition_penalty": 1.0, "seed": 50, "max_context": 4096 }
+}'
+```
+
+```json
+{ "message": { "role": "assistant", "content": "I'm Phisch!" } }
+```
+
+- `role` can be `system`, `user` or `assistant`, anything else is an error.
+- Every message becomes `<|role|>content<|end|>`, and `<|assistant|>` goes at the end so the model knows it's its turn, the same format as [Talking to it](#talking-to-it).
+- The answer has the special tokens removed, so `content` is plain text.
+- The server doesn't remember conversations. You'll need to send the whole history every time.
+
+### Errors
+
+Every error phisch reports answers `500` with the reason as plain text, for example `no model loaded` or `unknown role bot, use system, user or assistant`. A body that isn't valid JSON or is missing fields is rejected before reaching phisch, with a `4xx` that says what's wrong.
+
+Requests take turns on the model: `/complete` and `/chat` wait for the generation before them, while `/load` and `/unload` fail right away with `model is busy, try again later`.
 
 ---
 

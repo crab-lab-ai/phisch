@@ -65,6 +65,8 @@ Once you have a successfully trained Phisch you can generate a sequence with it 
 
 Finally, if you want to share your Phisch you can use `phisch export` to turn a checkpoint into a safetensors file, it will write the weights together with the model config and the tokenizer in the `out/` directory.
 
+You can also serve a Phisch over HTTP with `phisch serve`, then load a model and generate with it from any other program.
+
 ```sh
 Usage: phisch <COMMAND>
 
@@ -75,6 +77,7 @@ Commands:
   generate   Generate a sequence of text
   export     Export a checkpoint as safetensors
   info       Show sizes of a config or a corpus
+  serve      Run a web server with the model in the specified directory
   help       Print this message or the help of the given subcommand(s)
 
 Options:
