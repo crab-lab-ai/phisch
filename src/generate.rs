@@ -11,7 +11,7 @@ use crate::config::model::ModelConfig;
 use crate::model::Phisch;
 use crate::model::kv_cache::KVCache;
 use crate::store::load_model;
-use crate::tokenizer::END;
+use crate::tokenizer::{END, Tokenizer};
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
@@ -21,24 +21,26 @@ pub fn generate(
     tokens: usize,
     top_k: usize,
     temperature: f64,
+    repetition_penalty: f64,
     seed: u64,
     max_context: usize,
 ) -> Result<()> {
     log::set_max_level(log::LevelFilter::Off);
     let device = Device::default();
-    let (model, tokenizer, config) = load_model(dir, checkpoint, max_context, &device)?;
+    let (model, tokenizer, config, _) = load_model(dir, checkpoint, max_context, &device)?;
 
     let mut ids = tokenizer.encode(prompt)?;
     let end = tokenizer.id(END)?;
     let sampling = Sampling {
         tokens,
+        repetition_penalty,
         top_k,
         temperature,
         seed,
         max_context,
     };
 
-    ids.extend(complete(&model, &config, &ids, end, &sampling)?);
+    ids.extend(complete(&model, &config, &tokenizer, &ids, end, &sampling)?);
 
     println!("{}", tokenizer.decode(&ids[..], false)?);
 
@@ -48,6 +50,7 @@ pub fn generate(
 #[derive(serde::Deserialize)]
 pub struct Sampling {
     pub tokens: usize,
+    pub repetition_penalty: f64,
     pub top_k: usize,
     pub temperature: f64,
     pub seed: u64,
@@ -57,6 +60,7 @@ pub struct Sampling {
 pub fn complete(
     model: &Phisch<Inference>,
     config: &ModelConfig,
+    tokenizer: &Tokenizer,
     ids: &[u32],
     end: u32,
     sampling: &Sampling,
@@ -74,19 +78,26 @@ pub fn complete(
         context.len()
     );
 
+    anyhow::ensure!(
+        sampling.repetition_penalty > 0.0,
+        "repetition penalty must be greater than 0"
+    );
+
     let input = Tensor::from_data(
         TensorData::new(context.to_vec(), [1, context.len()]),
         &device,
     );
     let mut logits = model.forward(input, Some(&mut kv_cache));
     let mut generated = Vec::new();
+    let mut history = Vec::new();
 
     for _ in 0..sampling.tokens {
         let [_, last, vocab] = logits.dims();
+
         let next = sample(
             logits.slice([0..1, last - 1..last]).reshape([vocab]),
-            sampling.top_k,
-            sampling.temperature,
+            &history[history.len().saturating_sub(32)..],
+            sampling,
             &mut rng,
         );
 
@@ -95,6 +106,9 @@ pub fn complete(
         }
 
         generated.push(next);
+        if !tokenizer.is_special_token(next) {
+            history.push(next);
+        }
 
         if kv_cache[0].seen >= sampling.max_context {
             break;
@@ -108,19 +122,36 @@ pub fn complete(
 }
 
 fn sample<B: Backend>(
-    logits: Tensor<B, 1>,
-    top_k: usize,
-    temperature: f64,
+    mut logits: Tensor<B, 1>,
+    history: &[u32],
+    sampling: &Sampling,
     rng: &mut StdRng,
 ) -> u32 {
-    if temperature <= 0.0 {
+    let [vocab] = logits.dims();
+    #[allow(clippy::float_cmp)]
+    if sampling.repetition_penalty != 1.0 {
+        let mut seen = vec![false; vocab];
+        for &id in history {
+            seen[id as usize] = true;
+        }
+        let seen =
+            Tensor::<B, 1, Bool>::from_data(TensorData::new(seen, [vocab]), &logits.device());
+
+        let p = sampling.repetition_penalty;
+        let penalized = logits
+            .clone()
+            .div_scalar(p)
+            .mask_where(logits.clone().lower_elem(0.0), logits.clone().mul_scalar(p));
+        logits = logits.mask_where(seen, penalized);
+    }
+
+    if sampling.temperature <= 0.0 {
         return logits.argmax(0).into_scalar().elem::<u32>();
     }
 
-    let [vocab] = logits.dims();
     let (values, indices) = logits
-        .div_scalar(temperature)
-        .topk_with_indices(top_k.clamp(1, vocab), 0);
+        .div_scalar(sampling.temperature)
+        .topk_with_indices(sampling.top_k.clamp(1, vocab), 0);
 
     let probabilities = softmax(values, 0).into_data();
     let indices = indices.into_data();

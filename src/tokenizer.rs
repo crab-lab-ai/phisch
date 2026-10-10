@@ -53,6 +53,16 @@ impl Tokenizer {
     pub fn into_inner(self) -> Inner {
         self.inner
     }
+
+    pub fn is_special_token(&self, id: u32) -> bool {
+        let special_tokens: Vec<u32> = special_tokens()
+            .iter()
+            .map(|token| token.content.clone())
+            .filter_map(|token| self.id(&token).ok())
+            .collect();
+
+        special_tokens.contains(&id)
+    }
 }
 
 fn special_tokens() -> Vec<AddedToken> {

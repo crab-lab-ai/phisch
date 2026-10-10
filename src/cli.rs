@@ -79,6 +79,8 @@ pub enum Commands {
             help = "Sampling temperature, 0 for greedy"
         )]
         temperature: f64,
+        #[arg(long, default_value_t = 1.0, help = "Repetition penalty")]
+        repetition_penalty: f64,
         #[arg(short, long, default_value_t = 50, help = "Seed of the sampler")]
         seed: u64,
         #[arg(
@@ -109,6 +111,29 @@ pub enum Commands {
     Info {
         #[command(subcommand)]
         command: InfoCommand,
+    },
+    #[command(about = "Run a web server with the model in the specified directory")]
+    Serve {
+        #[arg(
+            long,
+            default_value = "127.0.0.1",
+            help = "Host address used to serve the api"
+        )]
+        host: String,
+        #[arg(
+            short,
+            long,
+            default_value_t = 6248,
+            help = "Port used to serve the api"
+        )]
+        port: u16,
+        #[arg(
+            short,
+            long,
+            default_value = ARTIFACTS,
+            help = "Directory of a trained model"
+        )]
+        directory: PathBuf,
     },
 }
 

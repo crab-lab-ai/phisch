@@ -50,7 +50,7 @@ pub fn load_model(
     checkpoint: Option<&str>,
     max_context: usize,
     device: &Device,
-) -> Result<(Phisch<Inference>, Tokenizer, ModelConfig)> {
+) -> Result<(Phisch<Inference>, Tokenizer, ModelConfig, String)> {
     if let Some(file) = checkpoint.filter(|name| name.ends_with(".safetensors")) {
         let config = ModelConfig::load(dir.join("config.json"))?;
         let tokenizer = Tokenizer::load(dir.join("tokenizer.json"))?;
@@ -61,7 +61,7 @@ pub fn load_model(
         );
         model.load_from(&mut SafetensorsStore::from_file(dir.join(file)))?;
 
-        return Ok((model, tokenizer, config));
+        return Ok((model, tokenizer, config, file.to_string()));
     }
 
     let (config, checkpoint) = TrainConfig::config_for(dir, checkpoint)?;
@@ -73,5 +73,5 @@ pub fn load_model(
     )
     .load_file(dir.join(&checkpoint), &CompactRecorder::new(), device)?;
 
-    Ok((model, tokenizer, config.model))
+    Ok((model, tokenizer, config.model, checkpoint))
 }

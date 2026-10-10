@@ -19,6 +19,7 @@ mod generate;
 mod info;
 mod logger;
 mod model;
+mod serve;
 mod store;
 mod tokenizer;
 mod train;
@@ -51,6 +52,7 @@ fn main() -> Result<()> {
             tokens,
             top_k,
             temperature,
+            repetition_penalty,
             seed,
             max_context,
         } => generate::generate(
@@ -60,6 +62,7 @@ fn main() -> Result<()> {
             tokens,
             top_k,
             temperature,
+            repetition_penalty,
             seed,
             max_context,
         ),
@@ -72,5 +75,10 @@ fn main() -> Result<()> {
             cli::InfoCommand::Config { path } => config_info(&path),
             cli::InfoCommand::Corpus { path, tokenizer } => corpus_info(&path, &tokenizer),
         },
+        Commands::Serve {
+            host,
+            port,
+            directory,
+        } => serve::serve(&host, port, directory),
     }
 }
