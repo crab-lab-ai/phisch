@@ -277,6 +277,8 @@ Options:
           Seed of the sampler [default: 50]
       --max-context <MAX_CONTEXT>
           Most tokens a single generation can reach, prompt included [default: 4096]
+      --stream
+          Stream a response
   -h, --help
           Print help
 ```
@@ -292,9 +294,11 @@ Options:
 | `--repetition-penalty` | `1.0` | How much the model is pushed away from tokens it wrote recently. `1.0` turns it off, higher repeats less. Has to be bigger than `0`, see [Sampling](#sampling). |
 | `-s`, `--seed` | `50` | Seed of the sampling. Same prompt, same seed and same settings give the same text. |
 | `--max-context` | `4096` | Most tokens a single generation can reach, prompt included, see [Context and memory](#context-and-memory). |
+| `--stream` | off | Prints the text while the model writes it, instead of all at once at the end, see [The output](#the-output). |
 
 ```sh
 phisch generate "Once upon a time" -t 100
+phisch generate "Once upon a time" --stream
 phisch generate "Once upon a time" --temperature 0
 phisch generate "Once upon a time" --repetition-penalty 1.2
 phisch generate "Once upon a time" -a runs/experiment-1 --checkpoint phisch-latest
@@ -337,6 +341,8 @@ The model answers and stops when it writes `<|end|>`.
 
 phisch prints the **whole** text, your prompt plus what the model wrote, with the special tokens visible. The `<|end|>` that stopped the generation isn't printed.   
 So for a conversation, the model's answer is everything after the last `<|assistant|>` of your prompt.
+
+With `--stream`, your prompt is printed first and then the model's text appears token by token as it's written. The final text is exactly the same as without `--stream`.
 
 > [!NOTE]
 > Logs are turned off while generating, and the welcome line goes to stderr, so the text is the only thing on stdout. That makes it safe to pipe the output into another program.
@@ -607,9 +613,42 @@ curl -X POST localhost:6248/chat -H 'Content-Type: application/json' -d '{
 - The answer has the special tokens removed, so `content` is plain text.
 - The server doesn't remember conversations. You'll need to send the whole history every time.
 
+### Streaming
+
+`/complete` and `/chat` can send the text while the model writes it, instead of all at once at the end. Add `"stream": true` to the body:
+
+```sh
+curl -N -X POST localhost:6248/complete -H 'Content-Type: application/json' -d '{ "prompt": "Once upon a time", "stream": true }'
+curl -N -X POST localhost:6248/chat -H 'Content-Type: application/json' -d '{
+  "messages": [{ "role": "user", "content": "hi, who are you?" }],
+  "stream": true
+}'
+```
+
+The answer is a stream of [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events). Every piece of text comes in its own event, with the same field the endpoint uses without streaming, `text` for `/complete` and `content` for `/chat`:
+
+```
+data: {"text":" there"}
+
+data: {"text":" was"}
+
+data: {"text":" a little fish..."}
+
+event: done
+```
+
+- Joining every piece gives exactly the same text as the answer without `stream`, special tokens included for `/complete` and removed for `/chat`.
+- The stream always ends with a `done` event, or with an `error` event that has the reason as its data if something fails while generating.
+- `curl` waits to show what it receives unless you pass `-N`.
+
+> [!NOTE]
+> The model is taken for the whole stream, the same as for a normal request. Other `/complete` and `/chat` requests wait for it, and `/load` and `/unload` answer `model is busy, try again later`. Closing the connection stops the generation and frees the model right away.
+
 ### Errors
 
 Every error phisch reports answers `500` with the reason as plain text, for example `no model loaded` or `unknown role bot, use system, user or assistant`. A body that isn't valid JSON or is missing fields is rejected before reaching phisch, with a `4xx` that says what's wrong.
+
+With `"stream": true`, the request is checked before the stream starts, so these errors answer the same `500`. Only an error while generating arrives as an `error` event, since the stream has already started by then.
 
 Requests take turns on the model: `/complete` and `/chat` wait for the generation before them, while `/load` and `/unload` fail right away with `model is busy, try again later`.
 

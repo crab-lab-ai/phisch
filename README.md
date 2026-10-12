@@ -61,7 +61,7 @@ Then you must train a tokenizer with `phisch tokenizer data/your-corpus.txt`, th
 
 The next step is actually training the model, when you have your configuration prepared you can use `phisch train configs/your-config.json` to train the model with the specified configuration. Once a training has started, every epoch will save a checkpoint on the `artifacts/` folder.
 
-Once you have a successfully trained Phisch you can generate a sequence with it by using `phisch generate <PROMPT>`, if a checkpoint isn't passed via argument it will load the `-best` checkpoint of the last model trained in the `artifacts/` directory.
+Once you have a successfully trained Phisch you can generate a sequence with it by using `phisch generate <PROMPT>`, if a checkpoint isn't passed via argument it will load the `-best` checkpoint of the last model trained in the `artifacts/` directory. Add `--stream` to see the text while it's being generated.
 
 Finally, if you want to share your Phisch you can use `phisch export` to turn a checkpoint into a safetensors file, it will write the weights together with the model config and the tokenizer in the `out/` directory.
 
