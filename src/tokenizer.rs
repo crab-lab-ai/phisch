@@ -12,6 +12,7 @@ pub const SYSTEM: &str = "<|system|>";
 pub const USER: &str = "<|user|>";
 pub const ASSISTANT: &str = "<|assistant|>";
 
+pub const VOCAB_SIZE_DEFAULT: usize = 4096;
 const RESERVED: usize = 8;
 
 pub struct Tokenizer {

@@ -17,12 +17,11 @@ use tokio::task::block_in_place;
 
 use crate::backend::{Device, Inference};
 use crate::config::model::ModelConfig;
-use crate::generate::{self, Sampling};
+use crate::generate;
 use crate::model::Phisch;
+use crate::sampling::{MAX_CONTEXT_DEFAULT, Sampling};
 use crate::store::load_model;
 use crate::tokenizer::{ASSISTANT, END, SYSTEM, Tokenizer, USER};
-
-const MAX_CONTEXT: usize = 4096;
 
 struct Loaded {
     model: Phisch<Inference>,
@@ -89,6 +88,7 @@ struct LoadRequest {
 #[derive(Deserialize)]
 struct CompleteRequest {
     prompt: String,
+    #[serde(default)]
     sampling: Sampling,
 }
 
@@ -106,6 +106,7 @@ struct Message {
 #[derive(Deserialize)]
 struct ChatRequest {
     messages: Vec<Message>,
+    #[serde(default)]
     sampling: Sampling,
 }
 
@@ -119,7 +120,7 @@ async fn load(
     Json(request): Json<LoadRequest>,
 ) -> Result<StatusCode, AppError> {
     info!("POST /load");
-    let max_context = request.max_context.unwrap_or(MAX_CONTEXT);
+    let max_context = request.max_context.unwrap_or(MAX_CONTEXT_DEFAULT);
 
     let mut loaded = state
         .loaded

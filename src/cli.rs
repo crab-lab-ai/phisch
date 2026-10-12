@@ -2,6 +2,14 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::{
+    sampling::{
+        MAX_CONTEXT_DEFAULT, MAX_TOKENS_DEFAULT, REPETITION_PENALTY_DEFAULT, SEED_DEFAULT,
+        TEMPERATURE_DEFAULT, TOP_K_DEFAULT,
+    },
+    tokenizer::VOCAB_SIZE_DEFAULT,
+};
+
 const CONFIG: &str = "configs/";
 const ARTIFACTS: &str = "artifacts/";
 const OUTPUT: &str = "out/";
@@ -31,7 +39,7 @@ pub enum Commands {
             help = "Path of the resulting tokenizer"
         )]
         out: PathBuf,
-        #[arg(short, long, default_value_t = 4096, help = "Size of the vocabulary")]
+        #[arg(short, long, default_value_t = VOCAB_SIZE_DEFAULT, help = "Size of the vocabulary")]
         vocab: usize,
     },
     #[command(about = "Train a Phisch")]
@@ -62,30 +70,30 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            default_value_t = 64,
+            default_value_t = MAX_TOKENS_DEFAULT,
             help = "Amount of tokens to generate"
         )]
         tokens: usize,
         #[arg(
             short = 'k',
             long,
-            default_value_t = 40,
+            default_value_t = TOP_K_DEFAULT,
             help = "Amount of candidates to sample from"
         )]
         top_k: usize,
         #[arg(
             long,
-            default_value_t = 0.8,
+            default_value_t = TEMPERATURE_DEFAULT,
             help = "Sampling temperature, 0 for greedy"
         )]
         temperature: f64,
-        #[arg(long, default_value_t = 1.0, help = "Repetition penalty")]
+        #[arg(long, default_value_t = REPETITION_PENALTY_DEFAULT, help = "Repetition penalty")]
         repetition_penalty: f64,
-        #[arg(short, long, default_value_t = 50, help = "Seed of the sampler")]
+        #[arg(short, long, default_value_t = SEED_DEFAULT, help = "Seed of the sampler")]
         seed: u64,
         #[arg(
             long,
-            default_value_t = 4096,
+            default_value_t = MAX_CONTEXT_DEFAULT,
             help = "Most tokens a single generation can reach, prompt included"
         )]
         max_context: usize,

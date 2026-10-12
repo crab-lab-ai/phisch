@@ -19,6 +19,7 @@ mod generate;
 mod info;
 mod logger;
 mod model;
+mod sampling;
 mod serve;
 mod store;
 mod tokenizer;
