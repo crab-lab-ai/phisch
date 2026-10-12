@@ -1,7 +1,7 @@
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use tokenizers::models::TrainerWrapper;
 use tokenizers::models::bpe::{BPE, BpeTrainerBuilder};
 use tokenizers::pre_tokenizers::byte_level::ByteLevel;
@@ -63,6 +63,36 @@ impl Tokenizer {
             .collect();
 
         special_tokens.contains(&id)
+    }
+}
+
+pub struct TextStream {
+    ids: Vec<u32>,
+    sent: usize,
+    skip_special_tokens: bool,
+}
+
+impl TextStream {
+    pub fn new(skip_special_tokens: bool) -> Self {
+        Self {
+            ids: Vec::new(),
+            sent: 0,
+            skip_special_tokens,
+        }
+    }
+
+    pub fn push(&mut self, tokenizer: &Tokenizer, id: u32) -> Result<Option<String>> {
+        self.ids.push(id);
+        let text = tokenizer.decode(&self.ids, self.skip_special_tokens)?;
+
+        if text.ends_with('\u{FFFD}') || text.len() == self.sent {
+            return Ok(None);
+        }
+
+        let piece = text[self.sent..].to_string();
+        self.sent = text.len();
+
+        Ok(Some(piece))
     }
 }
 

@@ -56,6 +56,7 @@ fn main() -> Result<()> {
             repetition_penalty,
             seed,
             max_context,
+            stream,
         } => generate::generate(
             &artifacts,
             checkpoint.as_deref(),
@@ -66,6 +67,7 @@ fn main() -> Result<()> {
             repetition_penalty,
             seed,
             max_context,
+            stream,
         ),
         Commands::Export {
             checkpoint,

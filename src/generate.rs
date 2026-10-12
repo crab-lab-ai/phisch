@@ -1,3 +1,4 @@
+use std::io::{Write, stdout};
 use std::path::Path;
 
 use anyhow::Result;
@@ -11,7 +12,7 @@ use crate::model::Phisch;
 use crate::model::kv_cache::KVCache;
 use crate::sampling::{Sampling, sample};
 use crate::store::load_model;
-use crate::tokenizer::{END, Tokenizer};
+use crate::tokenizer::{END, TextStream, Tokenizer};
 
 const REPETITION_PENALTY_WINDOW: usize = 32;
 
@@ -26,6 +27,7 @@ pub fn generate(
     repetition_penalty: f64,
     seed: u64,
     max_context: usize,
+    stream: bool,
 ) -> Result<()> {
     log::set_max_level(log::LevelFilter::Off);
     let device = Device::default();
@@ -42,11 +44,115 @@ pub fn generate(
         max_context,
     };
 
-    ids.extend(complete(&model, &config, &tokenizer, &ids, end, &sampling)?);
+    if stream {
+        print!("{prompt}");
 
-    println!("{}", tokenizer.decode(&ids[..], false)?);
+        let completion = Completion::new(&model, &config, &tokenizer, &ids, end, &sampling)?;
+        let mut text_stream = TextStream::new(false);
+        for id in completion {
+            if let Some(decoded) = text_stream.push(&tokenizer, id)? {
+                print!("{decoded}");
+                stdout().flush()?;
+            }
+        }
+        println!();
+    } else {
+        ids.extend(complete(&model, &config, &tokenizer, &ids, end, &sampling)?);
+
+        println!("{}", tokenizer.decode(&ids[..], false)?);
+    }
 
     Ok(())
+}
+
+pub struct Completion<'a> {
+    model: &'a Phisch<Inference>,
+    tokenizer: &'a Tokenizer,
+    sampling: &'a Sampling,
+    end: u32,
+    device: Device,
+    rng: StdRng,
+    kv_cache: Vec<KVCache<Inference>>,
+    input: Tensor<Inference, 2, Int>,
+    history: Vec<u32>,
+    count: usize,
+}
+
+impl<'a> Completion<'a> {
+    pub fn new(
+        model: &'a Phisch<Inference>,
+        config: &'a ModelConfig,
+        tokenizer: &'a Tokenizer,
+        ids: &'a [u32],
+        end: u32,
+        sampling: &'a Sampling,
+    ) -> Result<Self> {
+        let device = model.embedding.weight.val().device();
+        let rng = StdRng::seed_from_u64(sampling.seed);
+        let kv_cache = vec![KVCache::<Inference>::empty(config.seq_length); config.layers];
+
+        let context = &ids[ids.len().saturating_sub(config.seq_length)..];
+
+        sampling.check(context.len())?;
+
+        let input = Tensor::from_data(
+            TensorData::new(context.to_vec(), [1, context.len()]),
+            &device,
+        );
+
+        Ok(Self {
+            model,
+            tokenizer,
+            sampling,
+            end,
+            device,
+            rng,
+            kv_cache,
+            input,
+            history: Vec::new(),
+            count: 0,
+        })
+    }
+}
+
+impl Iterator for Completion<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count >= self.sampling.tokens {
+            return None;
+        }
+
+        if self.kv_cache[0].seen >= self.sampling.max_context {
+            return None;
+        }
+
+        let logits = self
+            .model
+            .forward(self.input.clone(), Some(&mut self.kv_cache));
+
+        let [_, last, vocab] = logits.dims();
+
+        let next = sample(
+            logits.slice([0..1, last - 1..last]).reshape([vocab]),
+            &self.history[self.history.len().saturating_sub(REPETITION_PENALTY_WINDOW)..],
+            self.sampling,
+            &mut self.rng,
+        );
+
+        if next == self.end {
+            return None;
+        }
+
+        if !self.tokenizer.is_special_token(next) {
+            self.history.push(next);
+        }
+
+        self.input = Tensor::from_data(TensorData::new(vec![next], [1, 1]), &self.device);
+
+        self.count += 1;
+        Some(next)
+    }
 }
 
 pub fn complete(
@@ -57,58 +163,5 @@ pub fn complete(
     end: u32,
     sampling: &Sampling,
 ) -> Result<Vec<u32>> {
-    let device = model.embedding.weight.val().device();
-    let mut rng = StdRng::seed_from_u64(sampling.seed);
-    let mut kv_cache = vec![KVCache::<Inference>::empty(config.seq_length); config.layers];
-
-    let context = &ids[ids.len().saturating_sub(config.seq_length)..];
-
-    anyhow::ensure!(
-        sampling.max_context > context.len(),
-        "max-context ({}) must be larger than the prompt ({} tokens)",
-        sampling.max_context,
-        context.len()
-    );
-
-    anyhow::ensure!(
-        sampling.repetition_penalty > 0.0,
-        "repetition penalty must be greater than 0"
-    );
-
-    let input = Tensor::from_data(
-        TensorData::new(context.to_vec(), [1, context.len()]),
-        &device,
-    );
-    let mut logits = model.forward(input, Some(&mut kv_cache));
-    let mut generated = Vec::new();
-    let mut history = Vec::new();
-
-    for _ in 0..sampling.tokens {
-        let [_, last, vocab] = logits.dims();
-
-        let next = sample(
-            logits.slice([0..1, last - 1..last]).reshape([vocab]),
-            &history[history.len().saturating_sub(REPETITION_PENALTY_WINDOW)..],
-            sampling,
-            &mut rng,
-        );
-
-        if next == end {
-            break;
-        }
-
-        generated.push(next);
-        if !tokenizer.is_special_token(next) {
-            history.push(next);
-        }
-
-        if kv_cache[0].seen >= sampling.max_context {
-            break;
-        }
-
-        let input = Tensor::from_data(TensorData::new(vec![next], [1, 1]), &device);
-        logits = model.forward(input, Some(&mut kv_cache));
-    }
-
-    Ok(generated)
+    Ok(Completion::new(model, config, tokenizer, ids, end, sampling)?.collect())
 }

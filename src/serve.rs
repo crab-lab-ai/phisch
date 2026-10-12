@@ -1,27 +1,34 @@
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use burn::module::Module;
 use log::info;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
-use tokio::task::block_in_place;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{Mutex, mpsc};
+use tokio::task::{block_in_place, spawn_blocking};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::backend::{Device, Inference};
 use crate::config::model::ModelConfig;
-use crate::generate;
+use crate::generate::{self, Completion};
 use crate::model::Phisch;
 use crate::sampling::{MAX_CONTEXT_DEFAULT, Sampling};
 use crate::store::load_model;
-use crate::tokenizer::{ASSISTANT, END, SYSTEM, Tokenizer, USER};
+use crate::tokenizer::{ASSISTANT, END, SYSTEM, TextStream, Tokenizer, USER};
+
+const STREAM_BUFFER: usize = 32;
 
 struct Loaded {
     model: Phisch<Inference>,
@@ -90,6 +97,8 @@ struct CompleteRequest {
     prompt: String,
     #[serde(default)]
     sampling: Sampling,
+    #[serde(default)]
+    stream: bool,
 }
 
 #[derive(Serialize)]
@@ -108,6 +117,8 @@ struct ChatRequest {
     messages: Vec<Message>,
     #[serde(default)]
     sampling: Sampling,
+    #[serde(default)]
+    stream: bool,
 }
 
 #[derive(Serialize)]
@@ -182,22 +193,32 @@ async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse>, A
 async fn complete(
     State(state): State<AppState>,
     Json(request): Json<CompleteRequest>,
-) -> Result<Json<CompleteResponse>, AppError> {
+) -> Result<Response, AppError> {
     info!("POST /complete");
+
+    if request.stream {
+        return stream_text(&state, &request.prompt, request.sampling, false, "text").await;
+    }
+
     let text = with_model(&state, move |loaded| {
         generate_text(loaded, &request.prompt, &request.sampling, false)
     })
     .await?;
 
-    Ok(Json(CompleteResponse { text }))
+    Ok(Json(CompleteResponse { text }).into_response())
 }
 
 async fn chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, AppError> {
+) -> Result<Response, AppError> {
     info!("POST /chat");
     let prompt = chat_prompt(&request.messages)?;
+
+    if request.stream {
+        return stream_text(&state, &prompt, request.sampling, true, "content").await;
+    }
+
     let content = with_model(&state, move |loaded| {
         generate_text(loaded, &prompt, &request.sampling, true)
     })
@@ -208,7 +229,8 @@ async fn chat(
             role: "assistant".to_string(),
             content,
         },
-    }))
+    })
+    .into_response())
 }
 
 fn chat_prompt(messages: &[Message]) -> Result<String> {
@@ -229,18 +251,56 @@ fn chat_prompt(messages: &[Message]) -> Result<String> {
     Ok(format!("{turns}{ASSISTANT}"))
 }
 
+impl Loaded {
+    fn check(&self, sampling: &Sampling) -> Result<()> {
+        anyhow::ensure!(
+            sampling.max_context <= self.max_context,
+            "max_context ({}) can't be larger than the one the model was loaded with ({})",
+            sampling.max_context,
+            self.max_context
+        );
+
+        Ok(())
+    }
+
+    fn stream(
+        &self,
+        ids: &[u32],
+        sampling: &Sampling,
+        skip_special_tokens: bool,
+        key: &str,
+        tx: &Sender<Result<Event, Infallible>>,
+    ) -> Result<()> {
+        let end = self.tokenizer.id(END)?;
+        let mut text = TextStream::new(skip_special_tokens);
+
+        for id in Completion::new(
+            &self.model,
+            &self.config,
+            &self.tokenizer,
+            ids,
+            end,
+            sampling,
+        )? {
+            if let Some(piece) = text.push(&self.tokenizer, id)? {
+                let event = Event::default().json_data(json!({ key: piece }))?;
+                if tx.blocking_send(Ok(event)).is_err() {
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn generate_text(
     loaded: &Loaded,
     prompt: &str,
     sampling: &Sampling,
     skip_special_tokens: bool,
 ) -> Result<String> {
-    anyhow::ensure!(
-        sampling.max_context <= loaded.max_context,
-        "max_context ({}) can't be larger than the one the model was loaded with ({})",
-        sampling.max_context,
-        loaded.max_context
-    );
+    loaded.check(sampling)?;
 
     let ids = loaded.tokenizer.encode(prompt)?;
     let end = loaded.tokenizer.id(END)?;
@@ -254,6 +314,35 @@ fn generate_text(
     )?;
 
     loaded.tokenizer.decode(&generated, skip_special_tokens)
+}
+
+async fn stream_text(
+    state: &AppState,
+    prompt: &str,
+    sampling: Sampling,
+    skip_special_tokens: bool,
+    key: &'static str,
+) -> Result<Response, AppError> {
+    let loaded = state.loaded.clone().lock_owned().await;
+    let model = loaded.as_ref().ok_or_else(|| anyhow!("no model loaded"))?;
+    model.check(&sampling)?;
+    let ids = model.tokenizer.encode(prompt)?;
+    sampling.check(ids.len().min(model.config.seq_length))?;
+
+    let (tx, rx) = mpsc::channel(STREAM_BUFFER);
+    spawn_blocking(move || {
+        let Some(model) = loaded.as_ref() else {
+            return;
+        };
+
+        let event = match model.stream(&ids, &sampling, skip_special_tokens, key, &tx) {
+            Ok(()) => Event::default().event("done").data(""),
+            Err(err) => Event::default().event("error").data(err.to_string()),
+        };
+        let _ = tx.blocking_send(Ok(event));
+    });
+
+    Ok(Sse::new(ReceiverStream::new(rx)).into_response())
 }
 
 async fn with_model<T, F>(state: &AppState, f: F) -> Result<T, AppError>

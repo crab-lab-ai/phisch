@@ -97,6 +97,8 @@ pub enum Commands {
             help = "Most tokens a single generation can reach, prompt included"
         )]
         max_context: usize,
+        #[arg(long, help = "Stream a response")]
+        stream: bool,
     },
     #[command(about = "Export a checkpoint as safetensors")]
     Export {

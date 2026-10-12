@@ -1,3 +1,4 @@
+use anyhow::Result;
 use burn::prelude::ElementConversion;
 use burn::{
     Tensor,
@@ -32,6 +33,24 @@ impl Default for Sampling {
             seed: SEED_DEFAULT,
             max_context: MAX_CONTEXT_DEFAULT,
         }
+    }
+}
+
+impl Sampling {
+    pub fn check(&self, context_len: usize) -> Result<()> {
+        anyhow::ensure!(
+            self.max_context > context_len,
+            "max-context ({}) must be larger than the prompt ({} tokens)",
+            self.max_context,
+            context_len
+        );
+
+        anyhow::ensure!(
+            self.repetition_penalty > 0.0,
+            "repetition penalty must be greater than 0"
+        );
+
+        Ok(())
     }
 }
 
