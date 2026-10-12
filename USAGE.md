@@ -559,18 +559,19 @@ curl localhost:6248/status
 
 ### Complete
 
-Continues a prompt. The body has the prompt and a `sampling` object, and **every** sampling field is required:
+Continues a prompt. The body has the prompt and a `sampling` object as follows:
 
-| Field | Same as | Description |
-|---|---|---|
-| `tokens` | `--tokens` | Most tokens to generate. |
-| `top_k` | `--top-k` | Only the `k` most likely next tokens can be picked. |
-| `temperature` | `--temperature` | How adventurous the picks are, `0` is greedy. |
-| `repetition_penalty` | `--repetition-penalty` | How much recently written tokens are avoided, `1.0` turns it off. Has to be bigger than `0`. |
-| `seed` | `--seed` | Seed of the sampling. |
-| `max_context` | `--max-context` | Most tokens this generation can reach. Can't be bigger than the `max_context` the model was loaded with. |
+| Field | Same as | Default | Description |
+|---|---|---|---|
+| `tokens` | `--tokens` | `64` | Most tokens to generate. |
+| `top_k` | `--top-k` | `40` | Only the `k` most likely next tokens can be picked. |
+| `temperature` | `--temperature` | `0.8` | How adventurous the picks are, `0` is greedy. |
+| `repetition_penalty` | `--repetition-penalty` | `1.0` | How much recently written tokens are avoided, `1.0` turns it off. Has to be bigger than `0`. |
+| `seed` | `--seed` | `50` | Seed of the sampling. |
+| `max_context` | `--max-context` | `4096` | Most tokens this generation can reach. Can't be bigger than the `max_context` the model was loaded with. |
 
 ```sh
+curl -X POST localhost:6248/complete -H 'Content-Type: application/json' -d '{ "prompt": "Once upon a time" }'
 curl -X POST localhost:6248/complete -H 'Content-Type: application/json' -d '{
   "prompt": "Once upon a time",
   "sampling": { "tokens": 64, "top_k": 40, "temperature": 0.8, "repetition_penalty": 1.0, "seed": 50, "max_context": 4096 }
